@@ -4,6 +4,13 @@ import verifyEmailTemplate from "../utils/verifyEmailTemplate.js";
 import sendEmail from "../config/sendEmail.js";
 import genrateAccessToken from "../utils/genrateAccessToken.js";
 import genrateRefereshToken from "../utils/genrateRefereshToken.js";
+import uploadImageCloudinary from "../utils/uploadImageCloudinary.js";
+import upload from "../middleware/multer.js";
+import genratedOtp from "../utils/genrateOtp.js";
+import forgotPasswordTemplate from "../utils/forgotPasswordTemplate.js";
+import jwt from "jsonwebtoken"
+import dotenv from "dotenv"
+dotenv.config()
 export async function registerUserController(req,res){
     try {
         const {email,password,name} = req.body;
@@ -221,3 +228,285 @@ export async function logoutUserController(req,res){
     }
     
 }
+//Upload User Avatar
+export async function uploadUserAvatarController(req,res){
+    try {
+        const userId = req.userId // auth middlware
+        const image = req.file  // multer middleware
+
+        const upload = await uploadImageCloudinary(image)
+        if (!upload || !upload.url) {
+            return res.status(500).json({
+                message: "Image upload failed",
+                success: false,
+                error: true
+            });
+        }
+
+        
+        const updateUser = await UserModel.findByIdAndUpdate(userId,{
+            avatar : upload.url
+        })
+        if (!updateUser) {
+            return res.status(404).json({
+                message: "User not found",
+                success: false,
+                error: true
+            });
+        }
+        return res.json({
+            message : "upload profile",
+            success : true,
+            error : false,
+            data : {
+                _id : userId,
+                avatar : upload.url
+            }
+        })
+        
+    } catch (error) {
+        return res.status(500).json({
+            message: error.message||error,
+            error:true,
+            success:false
+        })
+    }
+    
+}
+//Update user details
+export async function updateUserDetails(req,res){
+    try {
+        const userId = req.userId //auth middleware
+        const { name, email, mobile, password } = req.body 
+
+        let hashPassword = ""
+
+        if(password){
+            const salt = await bcryptjs.genSalt(10)
+            hashPassword = await bcryptjs.hash(password,salt)
+        }
+
+        const updateUser = await UserModel.updateOne({ _id : userId},{
+            ...(name && { name : name }),
+            ...(email && { email : email }),
+            ...(mobile && { mobile : mobile }),
+            ...(password && { password : hashPassword })
+        })
+
+        return res.json({
+            message : "Updated successfully",
+            error : false,
+            success : true,
+            data : updateUser
+        })
+
+
+    } catch (error) {
+        return res.status(500).json({
+            message : error.message || error,
+            error : true,
+            success : false
+        })
+    }
+}
+//forgot password
+export const forgotPassword = async(req,res)=>{
+    try {
+        const {email} = req.body;
+        const user = await UserModel.findOne({email})
+        if(!user){
+            return res.status(400).json({
+                message : "User not found",
+                error : true,
+                success : false
+            })
+        }
+        const otp=genratedOtp();
+        
+        
+        const expiredTime=new Date(new Date()+60*60*1000); //1hr
+        const updateUser = await UserModel.findByIdAndUpdate({_id:user._id},{
+            forgot_password_otp:otp,
+            forgot_password_expire:new Date(expiredTime).toISOString()
+        })
+
+        await sendEmail({
+            sendTo:user.email,
+            subject:"Forgot password from blinkYT",
+            html:forgotPasswordTemplate({
+                name:user.name,
+                otp
+            })
+        })
+
+        return res.status(200).json({
+            message : "Check your email for OTP",
+            error : false,
+            success : true
+        })
+
+    } catch (error) {
+        return res.status(500).json({
+            message : error.message || error,
+            error : true,
+            success : false
+        })
+    }
+}
+//verify forgot password otp
+
+export async function verifyForgotPasswordOtp(req,res){
+
+    try {
+        const {email,otp}=req.body;
+        if(!email||!otp){
+            return res.status(400).json({
+                message:"Please provide all the reuired feild email and otp",
+                error:true,
+                success:false
+            })
+        }
+
+
+        const user = await UserModel.findOne({email})
+        if(!user){
+            return res.status(400).json({
+                message:"User not found",
+                error:true,
+                success:false
+            })
+        }
+
+        const currentTime=new Date().toISOString();
+        const expiredTime=new Date(user.forgot_password_expire);
+        if(currentTime>expiredTime){
+            return res.status(400).json({
+                message:"OTP expired",
+                error:true,
+                success:false
+            })
+        }
+
+        const isOtpMatch=user.forgot_password_otp===otp;
+        if(!isOtpMatch){
+            return res.status(400).json({
+                message:"Invalid OTP",
+                error:true,
+                success:false
+            })
+        }
+
+         return res.json({
+            message:"OTP Verification completed successfully",
+            error:false,
+            success:true
+         })
+        
+    } catch (error) {
+       return res.status(500).json({
+        message:error.message||error,
+        error:true,
+        success:false})
+        
+    }
+}
+//reset the password
+export const resetPassword=async(req,res)=>{
+    try {
+        const {email,newpassword,confirmpassword}=req.body;
+        if (!email || !newpassword || !confirmpassword) {            
+            return res.status(400).json({
+                message:"Invalid request",
+                error:true,
+                success:false
+            })
+            
+        }
+        const user=await UserModel.findOne({email});
+        if (!user) {
+            return res.status(400).json({
+                message:"Invalid request",
+                error:true,
+                success:false
+            })
+            
+        }
+        if (newpassword!==confirmpassword) {
+            return res.status(400).json({
+                message:"New password and confirm password does not match",
+                error:true,
+                success:false
+            })
+            
+        }
+        const salt = await bcrypt.genSalt(10);
+        const hashPassword=await bcrypt.hash(newpassword,salt);   
+        const updateUser=await UserModel.findByIdAndUpdate(user._id,{
+            password:hashPassword
+        })
+        return res.json({
+            message:"Password reset successfully",
+            error:false,
+            success:true
+        })
+        
+    } catch (error) {
+        return res.status(500).json({
+            message:error.message||error,
+            error:true,
+            success:false
+        })
+    }
+}
+//refresh token controller
+export async function refreshTokenController(req,res){
+
+try {
+    const refreshToken=req.cookies.refreshToken||req?.header?.authorization?.split(" ")[1];
+    if(!refreshToken){
+        return res.status(401).json({
+            message:"Invalid refresh token1",
+            error:true,
+            success:false
+        })
+    }
+
+    const verifyToken=jwt.verify(refreshToken,process.env.SECERET_KEY_REFRESH_TOKEN);
+    if(!verifyToken){
+        return res.status(401).json({
+            message:"token expired",
+            error:true,
+            success:false
+        })
+    }
+   
+    const userId=verifyToken.id;
+    const newAccessToken= await genrateAccessToken(userId);
+    
+    const cookiesOption={
+        httpOnly:true,
+        secure:true,
+        "sameSite":"none"
+    }
+    res.cookie('accessToken',newAccessToken,cookiesOption)
+
+    return res.json({
+        message:"Refresh token success and new accesstoken genrated",
+        error:false,
+        success:true,
+        data:{
+            accessToken:newAccessToken
+        }
+    })
+    
+} catch (error) {
+    return res.status(500).json({
+        message:error.message||error,
+        error:true,
+        success:false
+    })
+}
+
+
+}
+

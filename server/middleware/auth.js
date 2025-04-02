@@ -1,39 +1,40 @@
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
-dotenv.config();
+dotenv.config(
+);
 
-const auth=async(req,res,next)=>{
-
+const auth = async(request,response,next)=>{
     try {
-
-        const token=req.cookies.accessToken||req?.headers?.authorization.split(" ")[1];// ["bearer", "token"]
-        if(!token)
-        {
-            return res.status(401).json({
-                message:"Please login",
-                error:true,
-                success:false
-            })
-        }
-        const decodedToken=await jwt.verify(token,process.env.SECERET_KEY_ACCESS_TOKEN);
+        const token = request.cookies.accessToken || request?.headers?.authorization?.split(" ")[1]
        
-        if(!decodedToken){
-            return res.status(401).json({
-                message:"Invalid token",
-                error:true,
-                success:false
+        if(!token){
+            return response.status(401).json({
+                message : "Provide token"
             })
         }
-      req.userId=decodedToken.id;
-      next();
-        
+
+
+        const decode = await jwt.verify(token,process.env.SECERET_KEY_ACCESS_TOKEN)
+
+        if(!decode){
+            return response.status(401).json({
+                message : "unauthorized access",
+                error : true,
+                success : false
+            })
+        }
+
+        request.userId = decode.id
+
+        next()
+
     } catch (error) {
-        res.status(500).json({
-            message: error.message||error,
-            error:true,
-            success:false
+        return response.status(500).json({
+            message:error.message||error,
+            error : true,
+            success : false
         })
     }
-} 
+}
 
-export default auth;
+export default auth
